@@ -18,7 +18,7 @@ OneCP exists exactly in that gap:
 
 > A small, self-hosted control panel that wraps Ansible playbooks in an app-centric deployment UX, without trying to be a full PaaS or a full automation platform.
 
-The key constraint is: Ansible stays the source of truth. OneCP is a thin layer on top that makes everyday deployments easier.
+The key constraint is: Ansible stays the source of truth for deployment operations, but OneCP acts as the editor and runner. OneCP is a thin layer on top that makes everyday deployments easier.
 
 ---
 
@@ -53,12 +53,12 @@ There is intentionally no deep magic here. An app in OneCP is mostly a way to:
 
 ### 2.3 Playbooks and Recipes
 
-The playbook remains an Ansible concept in your Git repo. OneCP doesn’t try to hide it or auto-generate it.
+Playbooks are stored directly in OneCP's database, allowing you to manage and edit your automation logic right from the UI without requiring an external Git repository for your infra.
 
 A Recipe is an application-facing wrapper around a playbook:
 
 - References:
-  - A specific playbook (path in a repo).
+  - A specific playbook (managed internally within OneCP).
   - A target inventory or group (where to run it).
 - Configuration:
   - Default variables.
@@ -70,7 +70,7 @@ In practice, a recipe corresponds to things like:
 - “Deploy the worker to staging”
 - “Roll back the last release”
 
-Developers see recipes; ops maintain the underlying playbooks.
+Developers see recipes; ops maintain the underlying playbooks directly within OneCP.
 
 ### 2.4 Deployments
 
@@ -103,22 +103,17 @@ The backend has three responsibilities:
 
 1. API and storage layer
    - Expose API endpoints for:
-     - Servers, environments, apps, recipes, deployments, env vars.
-   - Persist data in PostgreSQL.
+     - Servers, environments, apps, playbooks, recipes, deployments, env vars.
+   - Persist data in PostgreSQL (including playbook definitions).
    - Enforce basic RBAC (e.g. who can deploy to production vs staging).
 
 2. Ansible execution layer
    - Accept “run this recipe with these parameters” from the API.
    - Use `ansible-runner` or similar to execute the underlying playbook:
+     - Dump the playbook from the DB to a temporary file.
      - Read inventories and vars.
      - Stream output lines/tasks back to the frontend.
      - Capture final status and statistics.
-
-   - Optional integration mode:
-     - Instead of running playbooks directly, call AWX’s REST API to:
-       - Launch job templates.
-       - Read job status and logs.
-     - This is useful for teams that already use AWX and want a simplified app view on top.
 
 3. Webhook and scheduling
    - Receive Git webhooks.
@@ -137,6 +132,9 @@ The frontend is a browser-based UI that does not hide the realities of deploymen
   - Add/update servers.
   - Test SSH connectivity.
   - View basic tags and environment assignments.
+
+- Playbooks page
+  - Create and edit Ansible playbooks directly via a code editor in the browser.
 
 - App page
   - Shows branches, environments, and recipes.
@@ -169,10 +167,9 @@ This section is meant to show how OneCP should feel in daily use.
    - Tag servers `prod`, `staging`, etc.
    - Hit “Test Connection” to confirm SSH works.
 
-3. Attach Ansible repo
-   - Configure a Git repo URL where your playbooks live.
-   - OneCP clones or pulls this repo in the background.
-   - The UI lists available playbooks (paths) once they’re discovered.
+3. Create Playbooks
+   - Write your Ansible playbooks directly within the OneCP UI.
+   - Playbooks are stored safely in the database and can be edited anytime.
 
 4. Define environments
    - Create `production`, `staging`, `dev`.
@@ -182,7 +179,7 @@ This section is meant to show how OneCP should feel in daily use.
 
 1. Create an App:
    - Name: `api-service`.
-   - Link it to the same Ansible repo or another service repo.
+   - Connect it to your app's Git repository.
    - Attach `production` and `staging` environments.
 
 2. Add Recipes:
@@ -203,6 +200,7 @@ This section is meant to show how OneCP should feel in daily use.
 3. OneCP:
    - Resolves server list from the `production` environment.
    - Prepares Ansible vars from env vars + form inputs.
+   - Dumps the playbook from the DB.
    - Starts `ansible-runner` with the chosen playbook and inventory.
 
 4. The deployment view:
@@ -213,7 +211,7 @@ This section is meant to show how OneCP should feel in daily use.
    - The deployment history entry is updated.
    - The commit, duration, and summary are recorded for future reference.
 
-Over time, teams build a rhythm around this flow. The important thing is that the same playbooks can still be run manually or from other tools; OneCP doesn’t lock them in.
+Over time, teams build a rhythm around this flow. The important thing is that the same playbooks can still be run manually if exported; OneCP doesn’t lock them in, though it acts as the primary source of truth.
 
 ---
 
@@ -234,11 +232,7 @@ OneCP differs in intent:
 - Smaller scope: mostly focused on deployments, not general automation.
 - App-centric: emphasises “apps + environments + recipes” instead of “jobs + templates”.
 - Simpler: one VPS install, fewer moving parts, suitable for small teams and agencies.
-
-In some setups, AWX and OneCP may coexist:
-
-- AWX as the automation control plane.
-- OneCP as the developer-facing deployment panel, calling AWX jobs under the hood.
+- Independent: OneCP runs playbooks natively and does not require an AWX instance or any connection to it.
 
 ### 5.2 Compared to Coolify / CapRover / Dokploy
 
@@ -269,9 +263,6 @@ This section is intentionally explicit about what might be added later and what 
   - First-class support for GitHub/GitLab/Bitbucket/Gitea webhooks.
   - Mapping branches to environments (e.g. `main` → production, `develop` → staging).
 
-- AWX Mode
-  - Option to configure OneCP to talk to an AWX instance for job execution instead of running Ansible locally.
-
 - Secrets Backend
   - Pluggable secret storage (Vault, cloud secret managers).
   - Stronger controls around who can view or edit secrets.
@@ -284,7 +275,7 @@ This section is intentionally explicit about what might be added later and what 
 
 - Becoming a full CI/CD system.
 - Managing Kubernetes clusters or Docker Swarm directly (that’s a different product class).
-- Replacing AWX in environments that already rely on its feature set.
+- Becoming a general-purpose IT automation platform.
 
 If the project ever grows into those areas, it should do so carefully, without losing the “small control panel on top of Ansible” identity.
 
@@ -295,8 +286,8 @@ If the project ever grows into those areas, it should do so carefully, without l
 - Use it on non-critical infra first.  
   Early versions will change schemas and APIs. Treat this as an experimental path to deployment, not a source of truth until it stabilises.
 
-- Keep playbooks in Git.  
-  OneCP should never be the only place where deployment logic lives. It is a lens on top of your repos.
+- Playbooks live in OneCP.  
+  You manage and version your playbooks directly in OneCP's database, simplifying the workflow and removing dependency on external repos for infrastructure logic.
 
 - Design for failure visibility.  
   If a deploy fails, the Ansible log is the ground truth. OneCP’s job is to make it easy to get there quickly.
